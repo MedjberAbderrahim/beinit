@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
+# PYTHON_ARGCOMPLETE_OK
+import argcomplete, argparse
 from pwn import *
-import argparse
 import os
 from elftools.elf.elffile import ELFFile
 from elftools.elf.constants import SH_FLAGS
@@ -55,7 +56,7 @@ p.interactive()
 """
     return script
 
-def detect_chall(filepath):
+def is_chall(filepath):
     try:
         f = open(filepath, 'rb')
 
@@ -91,7 +92,7 @@ def getBinaryPath() -> str:
     candidates = []
 
     for entry in entries:
-        if entry.is_file() and detect_chall(entry.path):
+        if entry.is_file() and is_chall(entry.path):
             candidates.append(entry.path)
     
     if len(candidates) > 1:
@@ -104,7 +105,6 @@ def getBinaryPath() -> str:
     return os.path.abspath(candidates[0])
 
 def is_libc(filepath: str) -> bool:
-    """Check if a file is a libc shared library"""
     try:
         f = open(filepath, 'rb')
         # Check ELF magic number
@@ -163,7 +163,6 @@ def detect_libc() -> str:
     elif len(candidates) == 0:
         print("No candidate libc executable found in current directory, ignoring libc patching...")
         return None
-    
     return os.path.abspath(candidates[0])
 
 def is_interpreter(filepath: str) -> bool:
@@ -230,9 +229,15 @@ def detect_interpreter() -> str:
     
     return os.path.abspath(candidates[0])
 
-# def patch_binary(binary: str, libc: str = None, interpreter: str = None):
 def patch_binary(args):
     args.binary = os.path.abspath(args.binary)
+
+    args.libc = os.path.abspath(args.libc) if args.libc else detect_libc()
+    args.interpreter = os.path.abspath(args.interpreter) if args.interpreter else detect_interpreter()
+
+    if args.libc is None and args.interpreter is None:
+        print("No libc or interpreter specified/found - skipping patching")
+        return
 
     try:
         subprocess.run([
@@ -243,14 +248,7 @@ def patch_binary(args):
         print(f"Backed up bianry to {args.binary}.bak")
     except subprocess.CalledProcessError as e:
         print(f"Failed to create backup: {e}", file=sys.stderr)
-    
-    args.libc = os.path.abspath(args.libc) if args.libc else detect_libc()
-    args.interpreter = os.path.abspath(args.interpreter) if args.interpreter else detect_interpreter()
 
-    if args.libc is None and args.interpreter is None:
-        print("No libc or interpreter specified/found - skipping patching")
-        return
-    
     # Build patchelf command
     try:
         cmd = ['/usr/bin/patchelf']
@@ -266,20 +264,81 @@ def patch_binary(args):
     except subprocess.CalledProcessError as e:
         print(f"Patching failed: {e}", file=sys.stderr)
 
+class CustomCompleter:
+    @staticmethod
+    def binary_completer(prefix, parsed_args, **kwargs):
+        """Complete binary files (executables)"""
+        files = []
+        try:
+            for entry in os.scandir('.'):
+                if entry.is_file() and is_chall(entry.path):
+                    if entry.name.startswith(prefix):
+                        files.append(entry.name)
+        except:
+            pass
+        return files
+
+    @staticmethod
+    def libc_completer(prefix, parsed_args, **kwargs):
+        """Complete libc files"""
+        files = []
+        try:
+            for entry in os.scandir('.'):
+                if entry.is_file() and is_libc(entry.path):
+                    if entry.name.startswith(prefix):
+                        files.append(entry.name)
+        except:
+            pass
+        return files
+
+    @staticmethod
+    def interpreter_completer(prefix, parsed_args, **kwargs):
+        """Complete interpreter files"""
+        files = []
+        try:
+            for entry in os.scandir('.'):
+                if entry.is_file() and is_interpreter(entry.path):
+                    if entry.name.startswith(prefix):
+                        files.append(entry.name)
+        except:
+            pass
+        return files
+
+    @staticmethod
+    def python_file_completer(prefix, parsed_args, **kwargs):
+        """Complete Python files for output"""
+        files = []
+        try:
+            for entry in os.scandir('.'):
+                if entry.is_file() and entry.name.endswith('.py'):
+                    if entry.name.startswith(prefix):
+                        files.append(entry.name)
+        except:
+            pass
+        
+        # If no matches found, suggest creating a new .py file
+        if not files:
+            suggestion = prefix + '.py' if prefix and not prefix.endswith('.py') else (prefix or 'exploit.py')
+            files.append(suggestion)
+        
+        return files
+
 def main():
-    parser = argparse.ArgumentParser(description='pwninit-like tool')
-    parser.add_argument('--target', '-t', help='Host for Remote Connection', type=ascii)
+    parser = argparse.ArgumentParser(description='pwninit-like tool with TAB completion')
+    parser.add_argument('--target', '-t', help='Host for Remote Connection', type=str)
     parser.add_argument('--port', '-p', help='Port for Remote Connection', type=int)
     parser.add_argument('--checksec', help='Enable checksec in script', action='store_true')
     parser.add_argument('--ssl', '-s', help='Enable SSL for Remote Connection', action='store_true')
     parser.add_argument('--local', help='Set script for local connection only', action='store_true')
     parser.add_argument('--remote', help='Set script for remote connection only', action='store_true')
-    parser.add_argument('--no-script', help='Do not generate a script', action='store_true')
-    parser.add_argument('--libc', help='Explicitely specify libc path to patch binary with', type=ascii)
-    parser.add_argument('--interpreter', help='Explicitely specify linux interpreter path to patch binary with', type=ascii)
+    parser.add_argument('--no-script', help='Do not generate a script, attempt to patch only', action='store_true')
+    parser.add_argument('--libc', help='Explicitly specify libc path to patch binary with', type=str).completer = CustomCompleter.libc_completer
+    parser.add_argument('--interpreter', help='Explicitly specify linux interpreter path to patch binary with', type=str).completer = CustomCompleter.interpreter_completer
     parser.add_argument('--no-patching', help='Do not attempt to patch the binary', action='store_true')
-    parser.add_argument('--output', '-o', help='Path to generated Script', default='./exploit.py')
-    parser.add_argument('--binary', '-b', help='Path to binary')
+    parser.add_argument('--output', '-o', help='Path to generated Script\'s Name', default='./exploit.py').completer = CustomCompleter.python_file_completer
+    parser.add_argument('--binary', '-b', help='Path to binary').completer = CustomCompleter.binary_completer
+
+    argcomplete.autocomplete(parser)
 
     args = parser.parse_args()
 
@@ -287,6 +346,8 @@ def main():
 
     if not args.binary:
         args.binary = getBinaryPath()
+    
+    assert is_chall(args.binary), "Invalide chall executable."
     
     if not args.no_patching:
         patch_binary(args)
