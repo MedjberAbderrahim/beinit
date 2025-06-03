@@ -91,7 +91,7 @@ def is_chall(filepath):
         if elf.header['e_type'] not in ['ET_EXEC', 'ET_DYN']:
             return False
 
-        if 'libc' in filepath or 'ld' in filepath:
+        if 'libc' in filepath or '.so' in filepath:
             return False
 
         # Check it has an INTERP segment (typical for executables)
