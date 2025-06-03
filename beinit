@@ -19,11 +19,29 @@ def validate_args(args):
             print("[-] Warning: Host IP flag ignored for local connections", file=stderr)
         if args.port:
             print("[-] Warning: Host Port flag ignored for local connections", file=stderr)
-
+    if args.remote:
+        if args.no_gdb:
+            print("[-] Warning: No GDB flag ignored, as it's already set for Remote connections", file=stderr)
+        
 def generateScript(args):
+    if args.local:
+        gdb_segment = \
+"""if args.GDB:
+    GDB_SCRIPT = \\
+\"\"\"
+\"\"\"
+    gdb.attach(p, gdbscript=GDB_SCRIPT)""" * (not args.no_gdb)
+    else:
+        gdb_segment = \
+"""if args.GDB:
+        GDB_SCRIPT = \\
+\"\"\"
+\"\"\"
+        gdb.attach(p, gdbscript=GDB_SCRIPT)""" * (not args.no_gdb)
+
     connection_segment = ""
     if args.local:
-        connection_segment = f"p = process(\"{args.binary}\")"
+        connection_segment = f"p = process(PATH)\n{gdb_segment}"
     elif args.remote:
         connection_segment = \
 f"""HOST = "{args.target if args.target else ''}"
@@ -37,23 +55,25 @@ f"""if args.REMOTE:
     PORT = {args.port if args.port else 0}
     p = remote(HOST, PORT{", ssl=True" * args.ssl})
 else:
-    p = process("{args.binary}")
+    p = process(PATH)
+    {gdb_segment}
 """
 
-    chall = f"exe = ELF(\"{args.binary}\", checkseck={args.checksec})\n"
-    libc = f"libc = ELF(\"{args.libc}\", checkseck=false)\n" * (args.libc is not None)
-    interpreter = f"ldd = ELF(\"{args.interpreter}\", checkseck=false)\n" * (args.interpreter is not None)
+    chall = f"exe = ELF(PATH, checksec={args.checksec})\n"
+    libc = f"libc = ELF(\"{args.libc}\", checksec=false)\n" * (args.libc is not None)
+    interpreter = f"ldd = ELF(\"{args.interpreter}\", checksec=false)\n" * (args.interpreter is not None)
 
     script = \
 f"""#!/usr/bin/env python3
 
 from pwn import *
 
+PATH = "{args.binary}" 
+
 {chall}{libc}{interpreter}
 {connection_segment}
+p.interactive()"""
 
-p.interactive()
-"""
     return script
 
 def is_chall(filepath):
@@ -63,12 +83,15 @@ def is_chall(filepath):
         # Check magic number
         if f.read(4) != b'\x7fELF':
             return False
-
+        
         f.seek(0)
         elf = ELFFile(f)
 
         # Check it's an executable (ET_EXEC or ET_DYN)
         if elf.header['e_type'] not in ['ET_EXEC', 'ET_DYN']:
+            return False
+
+        if 'libc' in filepath or 'ld' in filepath:
             return False
 
         # Check it has an INTERP segment (typical for executables)
@@ -231,8 +254,7 @@ def detect_interpreter() -> str:
 
 def patch_binary(args):
     args.binary = os.path.abspath(args.binary)
-
-    args.libc = os.path.abspath(args.libc) if args.libc else detect_libc()
+    args.libc = os.path.abspath(args.libc)  if args.libc else detect_libc()
     args.interpreter = os.path.abspath(args.interpreter) if args.interpreter else detect_interpreter()
 
     if args.libc is None and args.interpreter is None:
@@ -331,6 +353,7 @@ def main():
     parser.add_argument('--ssl', '-s', help='Enable SSL for Remote Connection', action='store_true')
     parser.add_argument('--local', help='Set script for local connection only', action='store_true')
     parser.add_argument('--remote', help='Set script for remote connection only', action='store_true')
+    parser.add_argument('--no-gdb', help='Skip GDB part in script', action='store_true')
     parser.add_argument('--no-script', help='Do not generate a script, attempt to patch only', action='store_true')
     parser.add_argument('--libc', help='Explicitly specify libc path to patch binary with', type=str).completer = CustomCompleter.libc_completer
     parser.add_argument('--interpreter', help='Explicitly specify linux interpreter path to patch binary with', type=str).completer = CustomCompleter.interpreter_completer
@@ -348,6 +371,14 @@ def main():
         args.binary = getBinaryPath()
     
     assert is_chall(args.binary), "Invalide chall executable."
+    
+    args.binary = os.path.abspath(args.binary)
+
+    if args.libc:
+        args.libc = os.path.abspath(args.libc)              
+
+    if args.interpreter:
+        args.interpreter = os.path.abspath(args.interpreter)
     
     if not args.no_patching:
         patch_binary(args)
