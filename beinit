@@ -60,8 +60,8 @@ else:
 """
 
     chall = f"exe = ELF(PATH, checksec={args.checksec})\n"
-    libc = f"libc = ELF(\"{args.libc}\", checksec=false)\n" * (args.libc is not None)
-    interpreter = f"ldd = ELF(\"{args.interpreter}\", checksec=false)\n" * (args.interpreter is not None)
+    libc = f"libc = ELF(\"{args.libc}\", checksec=False)\n" * (args.libc is not None)
+    interpreter = f"ldd = ELF(\"{args.interpreter}\", checksec=False)\n" * (args.interpreter is not None)
 
     script = \
 f"""#!/usr/bin/env python3
