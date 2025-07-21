@@ -22,6 +22,8 @@ def validate_args(args):
     if args.remote:
         if args.no_gdb:
             print("[-] Warning: No GDB flag ignored, as it's already set for Remote connections", file=stderr)
+    if args.no_patching and args.keep_symbols:
+            print("[-] Warning: --keep-symbols flag ignored, as there will be no patching (--no-patching flag specified)", file=stderr)
         
 def generateScript(args):
     if args.local:
@@ -59,9 +61,12 @@ else:
     {gdb_segment}
 """
 
+    libc_path = f"LIBC_PATH = \"{args.libc}\"\n" * (args.libc is not None)
+    ld_path = f"LD_PATH = \"{args.interpreter}\"\n" * (args.interpreter is not None)
+
     chall = f"exe = ELF(PATH, checksec={args.checksec})\n"
-    libc = f"libc = ELF(\"{args.libc}\", checksec=False)\n" * (args.libc is not None)
-    interpreter = f"ldd = ELF(\"{args.interpreter}\", checksec=False)\n" * (args.interpreter is not None)
+    libc = f"libc = ELF(LIBC_PATH, checksec=False)\n" * (args.libc is not None)
+    interpreter = f"ldd = ELF(LD_PATH, checksec=False)\n" * (args.interpreter is not None)
 
     script = \
 f"""#!/usr/bin/env python3
@@ -69,9 +74,10 @@ f"""#!/usr/bin/env python3
 from pwn import *
 
 PATH = "{args.binary}" 
-
+{libc_path}{ld_path}
 {chall}{libc}{interpreter}
 {connection_segment}
+
 p.interactive()"""
 
     return script
