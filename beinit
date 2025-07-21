@@ -267,7 +267,7 @@ def patch_binary(args):
             args.binary,
             f"{args.binary}.bak"
         ], check=True)
-        print(f"Backed up bianry to {args.binary}.bak")
+        print(f"Backed up binary to {args.binary}.bak")
     except subprocess.CalledProcessError as e:
         print(f"Failed to create backup: {e}", file=sys.stderr)
 
@@ -285,6 +285,30 @@ def patch_binary(args):
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
         print(f"Patching failed: {e}", file=sys.stderr)
+
+    if args.keep_symbols:
+        try:
+            subprocess.run([
+                '/usr/bin/objcopy',
+                '--only-keep-debug',
+                f'{args.binary}.bak',
+                f'{args.binary}.debug'
+            ], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to create debug file '{args.binary}.debug': {e}", file=sys.stderr)
+        except FileNotFoundError:
+            print("Error: '/usr/bin/objcopy' command not found.", file=sys.stderr)
+
+        try:
+            subprocess.run([
+                '/usr/bin/objcopy',
+                f'--add-gnu-debuglink={args.binary}.debug',
+                f'{args.binary}'
+            ], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to copy debug symbols from '{args.binary}.debug' to '{args.binary}': {e}", file=sys.stderr)
+        except FileNotFoundError:
+            print("Error: '/usr/bin/objcopy' command not found.", file=sys.stderr)
 
 class CustomCompleter:
     @staticmethod
@@ -354,6 +378,7 @@ def main():
     parser.add_argument('--local', help='Set script for local connection only', action='store_true')
     parser.add_argument('--remote', help='Set script for remote connection only', action='store_true')
     parser.add_argument('--no-gdb', help='Skip GDB part in script', action='store_true')
+    parser.add_argument('--keep-symbols', help='Copy symbols from original binary to patched one.', action='store_true')
     parser.add_argument('--no-script', help='Do not generate a script, attempt to patch only', action='store_true')
     parser.add_argument('--libc', help='Explicitly specify libc path to patch binary with', type=str).completer = CustomCompleter.libc_completer
     parser.add_argument('--interpreter', help='Explicitly specify linux interpreter path to patch binary with', type=str).completer = CustomCompleter.interpreter_completer
