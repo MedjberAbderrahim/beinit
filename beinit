@@ -24,7 +24,7 @@ def validate_args(args):
             print("[-] Warning: No GDB flag ignored, as it's already set for Remote connections", file=stderr)
     if args.no_patching and args.keep_symbols:
             print("[-] Warning: --keep-symbols flag ignored, as there will be no patching (--no-patching flag specified)", file=stderr)
-        
+
 def generateScript(args):
     if args.local:
         gdb_segment = \
@@ -64,7 +64,7 @@ else:
     libc_path = f"LIBC_PATH = \"{args.libc}\"\n" * (args.libc is not None)
     ld_path = f"LD_PATH = \"{args.interpreter}\"\n" * (args.interpreter is not None)
 
-    chall = f"exe = ELF(PATH, checksec={args.checksec})\n"
+    chall = f"exe = context.binary = ELF(PATH, checksec={args.checksec})\n"
     libc = f"libc = ELF(LIBC_PATH, checksec=False)\n" * (args.libc is not None)
     interpreter = f"ldd = ELF(LD_PATH, checksec=False)\n" * (args.interpreter is not None)
 
@@ -73,7 +73,7 @@ f"""#!/usr/bin/env python3
 
 from pwn import *
 
-PATH = "{args.binary}" 
+PATH = "{args.binary}"
 {libc_path}{ld_path}
 {chall}{libc}{interpreter}
 {connection_segment}
@@ -89,7 +89,7 @@ def is_chall(filepath):
         # Check magic number
         if f.read(4) != b'\x7fELF':
             return False
-        
+
         f.seek(0)
         elf = ELFFile(f)
 
@@ -123,14 +123,14 @@ def getBinaryPath() -> str:
     for entry in entries:
         if entry.is_file() and is_chall(entry.path):
             candidates.append(entry.path)
-    
+
     if len(candidates) > 1:
         print("Too many candidate ELF chall executables in current directory.", file=stderr)
         exit(1)
     elif len(candidates) == 0:
         print("No candidate ELF chall executable found in current directory.", file=stderr)
         exit(1)
-    
+
     return os.path.abspath(candidates[0])
 
 def is_libc(filepath: str) -> bool:
@@ -139,32 +139,32 @@ def is_libc(filepath: str) -> bool:
         # Check ELF magic number
         if f.read(4) != b'\x7fELF':
             return False
-            
+
         f.seek(0)
         elf = ELFFile(f)
-        
+
         # Check it's a shared library (ET_DYN)
         if elf.header['e_type'] != 'ET_DYN':
             return False
-            
+
         # Check for common libc patterns in filename
         filename = os.path.basename(filepath).lower()
-        if ('libc.so' in filename or 
-            'libc-' in filename or 
+        if ('libc.so' in filename or
+            'libc-' in filename or
             filename.startswith('libc.')):
             return True
-            
+
         # Additional checks for libc characteristics
         has_gnu_libc = False
         has_libc_functions = False
-        
+
         # Check for GNU C Library note
         for segment in elf.iter_segments():
             if segment.header.p_type == 'PT_NOTE':
                 for note in segment.iter_notes():
                     if note.n_type == 'NT_GNU_ABI_TAG' and note['abi'] == 'GNU':
                         has_gnu_libc = True
-        
+
         # Check for common libc functions
         symtab = elf.get_section_by_name('.dynsym')
         if symtab:
@@ -172,9 +172,9 @@ def is_libc(filepath: str) -> bool:
                 if sym.name in ['__libc_start_main', 'malloc', 'free', 'printf']:
                     has_libc_functions = True
                     break
-        
+
         return has_gnu_libc and has_libc_functions
-            
+
     except Exception:
         return False
 
@@ -185,7 +185,7 @@ def detect_libc() -> str:
     for entry in entries:
         if entry.is_file() and is_libc(entry.path):
             candidates.append(entry.path)
-    
+
     if len(candidates) > 1:
         print("Too many candidate libc executables in current directory, add option --no-patching or explicitely specify a libc, ignoring libc patching...", file=stderr)
         return None
@@ -200,34 +200,34 @@ def is_interpreter(filepath: str) -> bool:
             # Check ELF magic number
             if f.read(4) != b'\x7fELF':
                 return False
-                
+
             f.seek(0)
             elf = ELFFile(f)
-            
+
             # Check it's a shared library (ET_DYN)
             if elf.header['e_type'] != 'ET_DYN':
                 return False
-                
+
             # Check for common interpreter patterns in filename
             filename = os.path.basename(filepath).lower()
-            if ('ld-linux' in filename or 
+            if ('ld-linux' in filename or
                 'ld.so' in filename or
                 'ld64.so' in filename or
                 filename.startswith('ld-') or
                 'ld.' in filename):
                 return True
-                
+
             # Additional checks for interpreter characteristics
             has_interpreter_notes = False
             has_loader_functions = False
-            
+
             # Check for interpreter-specific notes
             for segment in elf.iter_segments():
                 if segment.header.p_type == 'PT_NOTE':
                     for note in segment.iter_notes():
                         if note.n_type == 'NT_GNU_ABI_TAG' and note['abi'] == 'GNU':
                             has_interpreter_notes = True
-            
+
             # Check for loader-specific symbols
             symtab = elf.get_section_by_name('.dynsym')
             if symtab:
@@ -235,9 +235,9 @@ def is_interpreter(filepath: str) -> bool:
                     if sym.name in ['_dl_start', '_dl_runtime_resolve', '__libc_start_main']:
                         has_loader_functions = True
                         break
-            
+
             return has_interpreter_notes and has_loader_functions
-            
+
     except Exception:
         return False
 
@@ -248,14 +248,14 @@ def detect_interpreter() -> str:
     for entry in entries:
         if entry.is_file() and is_interpreter(entry.path):
             candidates.append(entry.path)
-    
+
     if len(candidates) > 1:
         print("Too many candidate linux interpreter executables in current directory, add option --no-patching or explicitely specify an interpreter, ignoring interpreter patching...", file=stderr)
         return None
     elif len(candidates) == 0:
         print("No candidate linux interpreter executable found in current directory, ignoring interpreter patching...")
         return None
-    
+
     return os.path.abspath(candidates[0])
 
 def patch_binary(args):
@@ -280,13 +280,13 @@ def patch_binary(args):
     # Build patchelf command
     try:
         cmd = ['/usr/bin/patchelf']
-        
+
         if args.libc:
             cmd.extend(['--set-rpath', os.path.dirname(args.libc)])
-        
+
         if args.interpreter:
             cmd.extend(['--set-interpreter', args.interpreter])
-        
+
         cmd.append(args.binary)
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
@@ -367,12 +367,12 @@ class CustomCompleter:
                         files.append(entry.name)
         except:
             pass
-        
+
         # If no matches found, suggest creating a new .py file
         if not files:
             suggestion = prefix + '.py' if prefix and not prefix.endswith('.py') else (prefix or 'exploit.py')
             files.append(suggestion)
-        
+
         return files
 
 def main():
@@ -400,17 +400,17 @@ def main():
 
     if not args.binary:
         args.binary = getBinaryPath()
-    
+
     assert is_chall(args.binary), "Invalide chall executable."
-    
+
     args.binary = os.path.abspath(args.binary)
 
     if args.libc:
-        args.libc = os.path.abspath(args.libc)              
+        args.libc = os.path.abspath(args.libc)
 
     if args.interpreter:
         args.interpreter = os.path.abspath(args.interpreter)
-    
+
     if not args.no_patching:
         patch_binary(args)
 
